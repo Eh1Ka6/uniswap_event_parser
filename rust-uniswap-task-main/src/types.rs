@@ -111,7 +111,17 @@ impl LogBuffer {
     pub fn add_block(&mut self, block: &BlockHeader) {
         self.buffer.push_back(block.clone());
         println!("Block added to buffer, buffer size:{:?}",  self.buffer.len());
-        
+        if self.buffer.len() > 1 && self.detect_deep_reorganization().is_err() {
+            #[cfg(not(test))]
+            {
+                println!("Deep reorganization detected Exiting.");
+                std::process::exit(1);
+            }
+            #[cfg(test)]
+            {
+            println!("Exiting behavior suppressed during tests.");
+            }
+        }
     }
 
     pub async fn  process(&mut self,web3: &web3::Web3<web3::transports::ws::WebSocket>
@@ -143,11 +153,67 @@ impl LogBuffer {
     pub fn detect_deep_reorganization(&mut self) ->  Result<(), anyhow::Error> {
         if let Some(confirmed_block) = self.buffer.front() {
             if confirmed_block.number.unwrap() + U64::from(BUFFER_SIZE as u64) <= self.buffer.back().unwrap().number.unwrap() {
-                println!("Deep reorganization detected.");
-				std::process::exit(1);
+                return Err(anyhow::Error::msg("Deep reorganization detected"));
             }
         }
         Ok(())
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use web3::types::{BlockHeader, H160, H256, U64, U256, Bytes, H2048, H64};
+    // https://docs.rs/web3/latest/web3/types/struct.BlockHeader.html
+    fn mock_block_header(block_number: u64) -> BlockHeader {
+        BlockHeader {
+            number: Some(U64::from(block_number)),  // Block number set from parameter
+            hash: Some(H256::default()),            
+            parent_hash: H256::default(),          
+            uncles_hash: H256::default(),           
+            author: H160::default(),                
+            state_root: H256::default(),          
+            transactions_root: H256::default(),    
+            receipts_root: H256::default(),         
+            gas_used: U256::default(),              
+            gas_limit: U256::default(),             
+            base_fee_per_gas: Some(U256::default()),
+            extra_data: Bytes::default(),           
+            logs_bloom: H2048::default(),           
+            timestamp: U256::default(),             
+            difficulty: U256::default(),            
+            mix_hash: Some(H256::default()),        
+            nonce: Some(H64::default()),           
+        }
+    }
+
+    #[test]
+    fn test_detect_deep_reorganization() {
+        let mut log_buffer = LogBuffer::new();
+
+        //No deep reorganization 
+        for i in 1..=BUFFER_SIZE - 1 {
+            log_buffer.add_block(&mock_block_header(i as u64));
+        }
+        assert!(log_buffer.detect_deep_reorganization().is_ok(), "Deep reorganization incorrectly detected in sequential blocks");
+
+        //Deep reorganization detected during buffer initialization
+        let mut log_buffer = LogBuffer::new(); // Reset buffer
+        for i in 1..=BUFFER_SIZE / 2 {
+            log_buffer.add_block(&mock_block_header(i as u64));
+        }
+        //triggers deep reorganization during initialization
+        log_buffer.add_block(&mock_block_header(BUFFER_SIZE as u64 + 100));
+        assert!(log_buffer.detect_deep_reorganization().is_err(), "Deep reorganization not detected during initialization");
+
+        //Deep reorganization detected after buffer is full
+        let mut log_buffer = LogBuffer::new(); // Reset buffer
+        for i in 1..=BUFFER_SIZE {
+            log_buffer.add_block(&mock_block_header(i as u64));
+        }
+        //triggers deep reorganization
+        log_buffer.add_block(&mock_block_header(BUFFER_SIZE as u64 + 100));
+        assert!(log_buffer.detect_deep_reorganization().is_err(), "Deep reorganization not detected after buffer is full");
+    }
+}
