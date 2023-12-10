@@ -28,7 +28,6 @@ async fn main() -> Result<(), anyhow::Error> {
 
 		log_buffer.add_block(&block);
 		if log_buffer.buffer.len() >= BUFFER_SIZE {
-			log_buffer.detect_deep_reorganization()?;		
 			log_buffer.process(&web3,&swap_event,&contract_address).await?; 
 		}    
     }

@@ -23,17 +23,14 @@ pub struct LogBuffer {
 impl SwapLog {
     // Function to create a SwapLog from a raw Ethereum log
     fn from_log(swap_event_abi: &Event, log: &Log) -> Result<Self, Error> {
-        // Ensure the log has the correct number of parameters
-       /*if swap_event_abi.inputs.len() != 4 {
-            return Err(Error::msg("Invalid number of parameters in swap event"));
-        }*/
+    
 	
 	 // Decode the log
 	 let parsed_log = swap_event_abi.parse_log(ethabi::RawLog {
         topics: log.topics.clone(),
         data: log.data.0.clone(),
     })?;
-    println!("{:?}", parsed_log);
+  
     // Extract the details from the parsed log
      let sender = if let ethabi::Token::Address(addr) = &parsed_log.params[0].value {
        addr
@@ -215,5 +212,47 @@ mod tests {
         //triggers deep reorganization
         log_buffer.add_block(&mock_block_header(BUFFER_SIZE as u64 + 100));
         assert!(log_buffer.detect_deep_reorganization().is_err(), "Deep reorganization not detected after buffer is full");
+    }
+
+    use web3::{transports::Http, Web3, types::{FilterBuilder, BlockNumber}};
+    use std::str::FromStr;
+    
+    #[tokio::test]
+    async fn fetch_log_and_parse() -> Result<(), Box<dyn std::error::Error>> {
+        // Set up web3 with the HTTP transport
+        let http = Http::new("https://mainnet.infura.io/v3/f5373e503b134ffdb9a00d30f4c22bb1")?;
+        let web3 = Web3::new(http);
+        let contract_address = web3::types::H160::from_slice(
+            &hex::decode("5777d92f208679db4b9778590fa3cab3ac9e2168").unwrap()[..],
+        );
+        let contract = web3::contract::Contract::from_json(
+            web3.eth(),
+            contract_address,
+            include_bytes!("contracts/uniswap_pool_abi.json"),
+        )?;
+        let block_hash = H256::from_str("0xe7169e50c0ebeccd268ee16defc771b302af2bd4422bb3eae5b29626b9e56eab")?;
+        let swap_event=  contract.abi().events_by_name("Swap")?.first().unwrap();
+        let filter =  web3::types::FilterBuilder::default()
+        .block_hash(block_hash)
+        .address(vec![contract_address])
+        .topics(Some(vec![swap_event.signature()]), None, None, None)
+        .build();
+    
+        let logs = web3.eth().logs(filter).await?;
+               
+        if let Some(log) = logs.first() {
+            let swap_log = SwapLog::from_log(&swap_event, log)?;
+            SwapLog::print_details(&swap_log);
+                // Check if the amounts are within the acceptable delta
+            assert_eq!(swap_log.sender, "0x3fc91a3afd70395cd496c647d5a6cc9d4b2b7fad".parse()?);
+            assert_eq!(swap_log.recipient, "0x8fb892e9c203752dcd4ce5423263b329baf070b7".parse()?);            
+            assert!((swap_log.decimal0 + (227732.60000325253)) == 0.0);
+            assert!((swap_log.decimal1 - 227754.40344).abs() == 0.0);
+        } else {
+            return Err("No logs found".into());
+        }
+      
+    
+        Ok(())
     }
 }
