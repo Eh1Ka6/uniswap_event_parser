@@ -1,7 +1,8 @@
 mod types; // Import the types module
 
-use types::{BlockWithLogs, LogBuffer}; // Import your custom types
+use types::{ LogBuffer}; // Import your custom types
 use futures::StreamExt;
+const BUFFER_SIZE: usize = 6; 
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
@@ -24,15 +25,12 @@ async fn main() -> Result<(), anyhow::Error> {
 
 	
 	while let Some(Ok(block)) = block_stream.next().await {
-        let swap_logs_in_block = web3.eth().logs(
-            web3::types::FilterBuilder::default()
-                .block_hash(block.hash.unwrap())
-                .address(vec![contract_address])
-                .topics(Some(vec![swap_event.signature()]), None, None, None)
-                .build(),
-        ).await?;
-        log_buffer.add_block(BlockWithLogs::new(block, swap_logs_in_block));
-        log_buffer.process(&swap_event)?; 
+
+		log_buffer.add_block(&block);
+		if log_buffer.buffer.len() >= BUFFER_SIZE {
+			log_buffer.detect_deep_reorganization()?;		
+			log_buffer.process(&web3,&swap_event,&contract_address).await?; 
+		}    
     }
 	Ok(())
 }

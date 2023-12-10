@@ -4,11 +4,9 @@ use web3::{
 };
 use std::collections::VecDeque;
 use anyhow::Error;
+const BUFFER_SIZE: usize = 6; 
 
-pub struct BlockWithLogs {
-    block: BlockHeader,
-    logs: Vec<Log>,
-}
+
 pub struct SwapLog {
     sender: H160,
     recipient: H160,
@@ -18,15 +16,9 @@ pub struct SwapLog {
 	decimal1: f64,	
 }
 pub struct LogBuffer {
-    buffer: VecDeque<BlockWithLogs>,
+    pub buffer: VecDeque<BlockHeader>,
 }
 
-const BUFFER_SIZE: usize = 6; 
-impl BlockWithLogs {
-    pub fn new(block: BlockHeader, logs: Vec<Log>) -> Self {
-        BlockWithLogs { block, logs }
-    }
-}
 
 impl SwapLog {
     // Function to create a SwapLog from a raw Ethereum log
@@ -116,22 +108,26 @@ impl LogBuffer {
         }
     }
 
-    pub fn add_block(&mut self, block_with_logs: BlockWithLogs) {
-        self.buffer.push_back(block_with_logs);
+    pub fn add_block(&mut self, block: &BlockHeader) {
+        self.buffer.push_back(block.clone());
         println!("Block added to buffer, buffer size:{:?}",  self.buffer.len());
         
     }
 
-    pub fn process(&mut self, swap_event: &Event) -> Result<(), anyhow::Error> {
-        if self.buffer.len() >= BUFFER_SIZE {
-        if let Some(latest_block_with_logs) = self.buffer.back() {
-            let latest_block_number = latest_block_with_logs.block.number.unwrap();
-    
-            if Self::detect_deep_reorganization(&self.buffer, latest_block_number) {
-                println!("Deep reorganization detected. Clearing buffer and skipping processing.");
-                std::process::exit(1);
-            } else {
-                for log in latest_block_with_logs.logs.clone().into_iter() {
+    pub async fn  process(&mut self,web3: &web3::Web3<web3::transports::ws::WebSocket>
+        , swap_event: &Event,contract_address:&web3::types::H160
+    ) -> Result<(), anyhow::Error> {
+            let confirmed_block =  self.buffer.pop_front().unwrap();
+            
+            println!("Processing block number {}",confirmed_block.number.unwrap());
+            let swap_logs_in_block = web3.eth().logs(
+                web3::types::FilterBuilder::default()
+                    .block_hash(confirmed_block.hash.unwrap())
+                    .address(vec![*contract_address])
+                    .topics(Some(vec![swap_event.signature()]), None, None, None)
+                    .build(),
+            ).await?;
+                for log in swap_logs_in_block {
                     if let Err(err) = SwapLog::from_log(swap_event, &log) {
                         // Log the error and skip processing the block
                         println!("Error processing block: {}", err);
@@ -140,26 +136,18 @@ impl LogBuffer {
                         swap_log.print_details();
 
                     }
-            }
-            self.buffer.pop_front(); 
-    
-          
-            }
-        } 
-         } else {
-            println!("Buffer is not full. Skipping processing.");
-        }
-    
+            } 
         Ok(())
      
     }
-    fn detect_deep_reorganization(buffer: &VecDeque<BlockWithLogs>, current_block_number: U64) -> bool {
-        if let Some(confirmed_block) = buffer.front() {
-            if confirmed_block.block.number.unwrap() + U64::from(BUFFER_SIZE as u64) <= current_block_number {
-                return true;
+    pub fn detect_deep_reorganization(&mut self) ->  Result<(), anyhow::Error> {
+        if let Some(confirmed_block) = self.buffer.front() {
+            if confirmed_block.number.unwrap() + U64::from(BUFFER_SIZE as u64) <= self.buffer.back().unwrap().number.unwrap() {
+                println!("Deep reorganization detected.");
+				std::process::exit(1);
             }
         }
-        false
+        Ok(())
     }
 }
 
