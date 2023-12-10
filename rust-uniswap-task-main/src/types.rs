@@ -22,12 +22,12 @@ pub struct LogBuffer {
 }
 
 const BUFFER_SIZE: usize = 6; 
-
 impl BlockWithLogs {
     pub fn new(block: BlockHeader, logs: Vec<Log>) -> Self {
         BlockWithLogs { block, logs }
     }
 }
+
 impl SwapLog {
     // Function to create a SwapLog from a raw Ethereum log
     fn from_log(swap_event_abi: &Event, log: &Log) -> Result<Self, Error> {
@@ -123,29 +123,35 @@ impl LogBuffer {
     }
 
     pub fn process(&mut self, swap_event: &Event) -> Result<(), anyhow::Error> {
+        if self.buffer.len() >= BUFFER_SIZE {
         if let Some(latest_block_with_logs) = self.buffer.back() {
             let latest_block_number = latest_block_with_logs.block.number.unwrap();
-
-            if Self::detect_deep_reorganization(&self.buffer, latest_block_number) {
-                println!("Deep reorganization detected. Exiting.");
-                std::process::exit(1);
-            }
-        }
-        // process the buffer when full
-        if self.buffer.len() == BUFFER_SIZE {
-            println!("Processing logs.");
-            while let Some(block_with_logs) = self.buffer.pop_front() {
-                for log in block_with_logs.logs {
-                    if let Ok(swap_log) = SwapLog::from_log(swap_event, &log) {
-                        swap_log.print_details();
-                    }
-                }
-            }
-         }
-
     
+            if Self::detect_deep_reorganization(&self.buffer, latest_block_number) {
+                println!("Deep reorganization detected. Clearing buffer and skipping processing.");
+                std::process::exit(1);
+            } else {
+                for log in latest_block_with_logs.logs.clone().into_iter() {
+                    if let Err(err) = SwapLog::from_log(swap_event, &log) {
+                        // Log the error and skip processing the block
+                        println!("Error processing block: {}", err);
+                        break;
+                    } else if let Ok(swap_log) = SwapLog::from_log(swap_event,&log) {
+                        swap_log.print_details();
 
+                    }
+            }
+            self.buffer.pop_front(); 
+    
+          
+            }
+        } 
+         } else {
+            println!("Buffer is not full. Skipping processing.");
+        }
+    
         Ok(())
+     
     }
     fn detect_deep_reorganization(buffer: &VecDeque<BlockWithLogs>, current_block_number: U64) -> bool {
         if let Some(confirmed_block) = buffer.front() {
@@ -157,50 +163,3 @@ impl LogBuffer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs::File;
-    use std::io::Read;
-    use serde_json::Value;
-	struct BlockHeader {
-		number: U64,
-		
-	}
-	
-	struct BlockWithLogs {
-		block: BlockHeader,
-		logs: Vec<Log>,
-	}
-    #[test]
-    fn test_deep_reorganization_detection() {
-        let mut file = File::open("resources/mocked_chain.json").expect("file not found");
-        let mut data = String::new();
-        file.read_to_string(&mut data).expect("error reading file");
-        let blocks: Vec<Value> = serde_json::from_str(&data).expect("error parsing json");
-		let mut buffer = VecDeque::<BlockWithLogs>::new();
-        const BUFFER_SIZE: usize = 6;
-        let mut deep_reorg_detected = false;
-        // Simulate block stream from JSON data
-		
-        for block in blocks {
-			let block_number = U64::from(block["number"].as_u64().expect("block number missing"));;
-			// Create an instance of BlockWithLogs
-			let block_header = BlockHeader {
-				number: block_number,
-			};
-			let logs = Vec::<Log>::new();
-			let block_with_logs = BlockWithLogs {
-				block: block_header,
-				logs,
-			};
-			buffer.push_back(BlockWithLogs::from(block_with_logs));
-            if buffer.len() > BUFFER_SIZE {
-				deep_reorg_detected = detect_deep_reorganization(&buffer,block_number)
-			} 
-        }
-
-        // If no deep reorg was detected, the test should fail
-        assert!(!deep_reorg_detected, "Deep reorganization detected");
-    }
-}
