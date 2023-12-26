@@ -6,7 +6,7 @@ const BUFFER_SIZE: usize = 6;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-	const WEBSOCKET_INFURA_ENDPOINT: &str = "wss://mainnet.infura.io/ws/v3/f5373e503b134ffdb9a00d30f4c22bb1";
+	const WEBSOCKET_INFURA_ENDPOINT: &str = "wss://mainnet.infura.io/ws/v3/[YOURWEBSOCKET]";
 	
 	let web3 =
 		web3::Web3::new(web3::transports::ws::WebSocket::new(WEBSOCKET_INFURA_ENDPOINT).await?);
