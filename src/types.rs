@@ -107,7 +107,7 @@ impl LogBuffer {
 
     pub fn add_block(&mut self, block: &BlockHeader) {
         self.buffer.push_back(block.clone());
-        println!("Block added to buffer, buffer size:{:?}",  self.buffer.len());
+        println!("Block :{:?} added to buffer, buffer size:{:?}", block.number.unwrap() ,self.buffer.len());
         if self.buffer.len() > 1 && self.detect_deep_reorganization().is_err() {
             #[cfg(not(test))]
             {
